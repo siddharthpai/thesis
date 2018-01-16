@@ -4,7 +4,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import datetime as dt
-import pyKstest as kstest2
 from scipy import stats
 
 # This function returns the matrix of returns
@@ -32,13 +31,6 @@ def returnsMatrix(rawData):
 # Takes a list of prices and returns a list of returns
 def returnsMatrix2(a):
     return np.divide(a[1:], a[0:len(a)-1])-1
-
-modelData = pd.read_csv('Data/MarketData.csv')
-market = pd.read_csv('Data/Market.csv')
-rate = pd.read_csv('Data/Rate3m.csv')
-
-rets = returnsMatrix(modelData)
-rets = rets[1:len(rets)-1]
 
 #### Mean Variance Optimization #######
 # mu is the mean return vector as a list
@@ -68,6 +60,7 @@ def riskParity(sigma):
                    [w >= 0])
     prob.solve()
     return (w.value/sum_entries(w).value)
+
 ##############
 
 ########### CVaR Optimization ##########
@@ -78,7 +71,7 @@ def cvar(rets):
     z = Variable (s)
     x = Variable(rets.shape[1])
     r = Variable(1)
-    cons = [z >=0, sum_entries(x) == 1, x >=0, x<= 0.08]
+    cons = [z >=0, sum_entries(x) == 1, x >=0, x<= 0.1]
 
     for i in range (s):
         cons += [z[i,0]>= -rets[i]*x - r]
@@ -86,6 +79,7 @@ def cvar(rets):
     prob = Problem(Minimize(r + sum_entries(z)/((1-0.95)*s)), cons)
     prob.solve(solver = 'CVXOPT')
     return x.value
+
 ##################
 
 
@@ -98,38 +92,11 @@ def utilopt(mu, sigma, lam):
     ret = mu.T*x
     risk = quad_form(x, sigma)
     utility = -exp(-lam*(1+ret))
-    prob = Problem(Maximize(utility - risk),
+    prob = Problem(Maximize(utility - lam*risk),
                    [x>=0,
                     sum_entries(x) == 1])
-    prob.solve(solver = 'CVXOPT')
+    prob.solve()
     return x.value
-
-
-def utiloptpow(mu, sigma, beta):
-    x = Variable (len(mu))
-    ret = mu.T*x
-    risk = quad_form(x, sigma)
-
-    utility = power((1+ret), beta)/beta - 1/beta
-
-    prob = Problem(Maximize(utility - risk),
-                   [x>=0,
-                    sum_entries(x) == 1])
-    prob.solve(solver = 'CVXOPT')
-    return x.value
-
-def utiloptlog(mu, sigma):
-    x = Variable (len(mu))
-    ret = mu.T*x
-    risk = quad_form(x, sigma)
-
-    utility = log(1+ret)
-    prob = Problem(Maximize(utility - risk),
-                   [x>=0,
-                    sum_entries(x) == 1])
-    prob.solve(solver = 'CVXOPT')
-    return x.value
-
 ##############################
 
 # Produces the weights in risk-free asset and a risky fund
@@ -143,7 +110,7 @@ def benchmark(rf, mp, ret):
     return [w1, 1-w1]
 
 ########### Back tester Function ##################
-def backtest(desiredRet, start, end, trainingPeriod, period, gamma, lam, b, critical, showPlot, modelData, market, rate):
+def backtest(desiredRet, start, end, trainingPeriod, period, gamma, lam, critical, showPlot, modelData, market, rate):
     rets = returnsMatrix(modelData)
     rets = rets[1:len(rets)-1]
 
@@ -153,16 +120,12 @@ def backtest(desiredRet, start, end, trainingPeriod, period, gamma, lam, b, crit
     rpPerformance = []
     cvarPerformance = []
     utilPerformance = []
-    utilPerformancepow = []
-    utilPerformancelog = []
 
     benchalpha = []
     mvoalpha = []
     rpalpha = []
     cvaralpha = []
     utilalpha = []
-    utilalphapow = []
-    utilalphalog = []
 
     trainingDataIndex = start*period - trainingPeriod*period
     benchmarkWeights = [0]*2
@@ -183,14 +146,6 @@ def backtest(desiredRet, start, end, trainingPeriod, period, gamma, lam, b, crit
     utilWeights = [0]*2
     utilBudget = 1
     utilResult = 0
-
-    utilWeightspow = [0] * 2
-    utilBudgetpow = 1
-    utilResultpow = 0
-
-    utilWeightslog = [0] * 2
-    utilBudgetlog = 1
-    utilResultlog = 0
 
     rateLock = 0
     rebalanceDates = []
@@ -221,21 +176,11 @@ def backtest(desiredRet, start, end, trainingPeriod, period, gamma, lam, b, crit
             utilWeights = benchmark(float(rate.iloc[i]['Rate']),
                                     float(utilResult.T.dot(np.array(temp2.mean() * 252))), desiredRet)
 
-            utilResultpow = utiloptpow(np.array(temp2.mean() * 252), np.matrix(temp2.cov() * 252), b)
-            utilWeightspow = benchmark(float(rate.iloc[i]['Rate']),
-                                    float(utilResultpow.T.dot(np.array(temp2.mean() * 252))), desiredRet)
-
-            utilResultlog = utiloptlog(np.array(temp2.mean() * 252), np.matrix(temp2.cov() * 252))
-            utilWeightslog = benchmark(float(rate.iloc[i]['Rate']),
-                                    float(utilResultlog.T.dot(np.array(temp2.mean() * 252))), desiredRet)
-
             initialBench =  float(market.iloc[i]['Market'])
             initialMVO = float(mvoResult.T.dot(modelData.iloc[i][1:]))
             initialrp = float(rpResult.T.dot(modelData.iloc[i][1:]))
             initialcvar = float(cvarResult.T.dot(modelData.iloc[i][1:]))
             initialutil = float(utilResult.T.dot(modelData.iloc[i][1:]))
-            initialutilpow = float(utilResultpow.T.dot(modelData.iloc[i][1:]))
-            initialutillog = float(utilResultlog.T.dot(modelData.iloc[i][1:]))
 
             if i == start*period:
                 benchmarkBudget = 1
@@ -243,8 +188,6 @@ def backtest(desiredRet, start, end, trainingPeriod, period, gamma, lam, b, crit
                 rpBudget = 1
                 cvarBudget = 1
                 utilBudget = 1
-                utilBudgetpow = 1
-                utilBudgetlog = 1
 
             else:
                 benchmarkBudget = max(benchmarkValue, 0)
@@ -252,15 +195,11 @@ def backtest(desiredRet, start, end, trainingPeriod, period, gamma, lam, b, crit
                 rpBudget = max(rpValue, 0)
                 cvarBudget = max(cvarValue, 0)
                 utilBudget = max(utilValue, 0)
-                utilBudgetpow = max(utilValuepow, 0)
-                utilBudgetlog = max(utilValuelog, 0)
 
         dates.append(dt.datetime.strptime(modelData.iloc[i]['Date'], '%Y-%m-%d').date())
 
         benchmarkValue = benchmarkWeights[0]*benchmarkBudget*(1 + rateLock)**((i%period)/252) + \
                          benchmarkWeights[1]*benchmarkBudget*float(market.iloc[i]['Market'])/initialBench
-
-        benchmarkValueul = benchmarkBudget*float(market.iloc[i]['Market'])/initialBench
 
         mvoMarketValue = float(mvoResult.T.dot(modelData.iloc[i][1:]))
 
@@ -282,23 +221,11 @@ def backtest(desiredRet, start, end, trainingPeriod, period, gamma, lam, b, crit
         utilValue = utilWeights[0] * utilBudget * (1 + rateLock) ** ((i % period) / 252) + \
                     utilWeights[1] * utilBudget * float(utilMarketValue) / initialutil
 
-        utilMarketValuepow = float(utilResultpow.T.dot(modelData.iloc[i][1:]))
-
-        utilValuepow = utilWeightspow[0] * utilBudgetpow * (1 + rateLock) ** ((i % period) / 252) + \
-                    utilWeightspow[1] * utilBudgetpow * float(utilMarketValuepow) / initialutilpow
-
-        utilMarketValuelog = float(utilResultlog.T.dot(modelData.iloc[i][1:]))
-
-        utilValuelog = utilWeightslog[0] * utilBudgetlog * (1 + rateLock) ** ((i % period) / 252) + \
-                    utilWeightslog[1] * utilBudgetlog * float(utilMarketValuelog) / initialutillog
-
         benchmarkPerformance.append(benchmarkValue)
         mvoPerformance.append(mvoValue)
         rpPerformance.append(rpValue)
         cvarPerformance.append(cvarValue)
         utilPerformance.append(utilValue)
-        utilPerformancepow.append(utilValuepow)
-        utilPerformancelog.append(utilValuelog)
 
         if (i > start*period + 1):
             totalPeriod = i - start * period
@@ -307,8 +234,6 @@ def backtest(desiredRet, start, end, trainingPeriod, period, gamma, lam, b, crit
             mvoTemp = returnsMatrix2(mvoPerformance)
             cvarTemp = returnsMatrix2(cvarPerformance)
             utilTemp = returnsMatrix2(utilPerformance)
-            utilTemppow = returnsMatrix2(utilPerformancepow)
-            utilTemplog = returnsMatrix2(utilPerformancelog)
             rpTemp = returnsMatrix2(rpPerformance)
 
             marketTemp = returnsMatrix(market.iloc[start * period:i + 2])
@@ -337,16 +262,6 @@ def backtest(desiredRet, start, end, trainingPeriod, period, gamma, lam, b, crit
             utilalpha.append(utilPerformance[len(utilPerformance) - 1] ** (252 / totalPeriod) - 1 - (
                 rateLock + beta * (marketRet - rateLock)))
 
-            cov = np.cov(marketTemp['Market'], utilTemppow)
-            beta = cov[1, 0] / cov[0, 0]
-            utilalphapow.append(utilPerformancepow[len(utilPerformancepow) - 1] ** (252 / totalPeriod) - 1 - (
-                rateLock + beta * (marketRet - rateLock)))
-
-            cov = np.cov(marketTemp['Market'], utilTemplog)
-            beta = cov[1, 0] / cov[0, 0]
-            utilalphalog.append(utilPerformancelog[len(utilPerformancelog) - 1] ** (252 / totalPeriod) - 1 - (
-                rateLock + beta * (marketRet - rateLock)))
-
             cov = np.cov(marketTemp['Market'], rpTemp)
             beta = cov[1, 0] / cov[0, 0]
             rpalpha.append(rpPerformance[len(rpPerformance) - 1] ** (252 / totalPeriod) - 1 - (
@@ -356,8 +271,6 @@ def backtest(desiredRet, start, end, trainingPeriod, period, gamma, lam, b, crit
     mvoalpha = np.array(mvoalpha[int(len(mvoalpha) * 3 / 4):len(mvoalpha)])
     cvaralpha = np.array(cvaralpha[int(len(cvaralpha) * 3 / 4):len(cvaralpha)])
     utilalpha = np.array(utilalpha[int(len(utilalpha) * 3 / 4):len(utilalpha)])
-    utilalphapow = np.array(utilalphapow[int(len(utilalphapow) * 3 / 4):len(utilalphapow)])
-    utilalphalog = np.array(utilalphalog[int(len(utilalphalog) * 3 / 4):len(utilalphalog)])
     rpalpha = np.array(rpalpha[int(len(rpalpha) * 3 / 4):len(rpalpha)])
 
     benchmarkPerformance = np.array(benchmarkPerformance)
@@ -365,29 +278,26 @@ def backtest(desiredRet, start, end, trainingPeriod, period, gamma, lam, b, crit
     rpPerformance = np.array(rpPerformance)
     cvarPerformance = np.array(cvarPerformance)
     utilPerformance = np.array(utilPerformance)
-    utilPerformancepow = np.array(utilPerformancepow)
-    utilPerformancelog = np.array(utilPerformancelog)
 
     rawMarket = market.iloc[start*period: end * period]['Market'] /market.iloc[start*period]['Market']
 
     if (showPlot):
         plt.gca().xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
+
         plt.plot(dates, benchmarkPerformance, c='g')
         plt.plot(dates, mvoPerformance, c='r')
         plt.plot(dates, rpPerformance, c='y')
         plt.plot(dates, cvarPerformance, c='b')
         plt.plot(dates, utilPerformance, c='m')
-        plt.plot(dates, utilPerformancepow, c='#674BF4')
         plt.plot(dates, rawMarket, c = 'k')
         plt.gcf().autofmt_xdate()
 
         for xc in rebalanceDates:
             plt.axvline(x=xc, c="r", alpha=0.2)
-        # plt.scatter(rebalanceDates, rebalanceValues, c="r", alpha=0.5)
+
         plt.gcf().autofmt_xdate()
 
-        plt.legend(['Benchmark', 'MVO', 'Risk Parity', 'CVaR', 'Utility (Exp)', 'Utility (Pow)', 'Market Index'])
-
+        plt.legend(['Benchmark', 'MVO', 'Risk Parity', 'CVaR', 'Utility', 'Market Index'])
         plt.show()
 
     totalPeriod = (end - start)*period
@@ -405,10 +315,13 @@ def backtest(desiredRet, start, end, trainingPeriod, period, gamma, lam, b, crit
     beta = cov[1, 0] / cov[0, 0]
     alpha = benchmarkPerformance[len(benchmarkPerformance) - 1] ** (252 / totalPeriod) - 1 - (rateLock + beta * (
         marketRet - rateLock))
-    sharpe = ((benchmarkPerformance  [len(benchmarkPerformance)-1]** (252 / totalPeriod) - 1)-rateLock-1.5/100)/\
+
+    fees = 1.5 # 1.5% management fees
+
+    sharpe = ((benchmarkPerformance  [len(benchmarkPerformance)-1]** (252 / totalPeriod) - 1)-rateLock-fees/100)/\
              (benchmarkPerformance.std()*252**0.5)*100
 
-    mar = rateLock + 1.5/100
+    mar = rateLock + fees/100
     excessRet = benchmarkPerformance-1-mar
 
     if (np.std(np.minimum(excessRet, 0)) > 0):
@@ -416,25 +329,25 @@ def backtest(desiredRet, start, end, trainingPeriod, period, gamma, lam, b, crit
     else:
         sortino = "n/a"
 
+    conalphat = stats.ttest_1samp(benchalpha,0.0)
+    conalpha = int(conalphat[0] > 0 and conalphat[1] < critical)
+
     results ['Benchmark'] = {'beat': int(alpha > 0), 'alpha': alpha, 'Sharpe': sharpe,
                        'Return': (benchmarkPerformance[len(benchmarkPerformance)-1])**(252/totalPeriod)-1,
                        'Drawdown': ((benchmarkPerformance[q] - benchmarkPerformance[p])
                                           /benchmarkPerformance[q])**(252/(p-q)), 'Beta': beta,
-                             'ConAlpha': int(stats.ttest_1samp(benchalpha,0.0)[0]>0.05), 'Sortino': sortino}
-
-    benchExcess = mvoPerformance[len(mvoPerformance)-1] - benchmarkPerformance[len(benchmarkPerformance)-1]
+                             'ConAlpha': conalpha, 'Sortino': sortino}
 
     mvoTemp = returnsMatrix2(mvoPerformance)
     cov = np.cov(marketTemp['Market'], mvoTemp)
     beta = cov[1, 0] / cov[0, 0]
     alpha = mvoPerformance[len(mvoPerformance)-1]**(252/totalPeriod)-1 - (rateLock + beta*(
-        marketRet - rateLock))#* mvoWeights[1] - rateLock * mvoWeights[0]
-    sharpe = ((mvoPerformance  [len(mvoPerformance)-1]** (252 / totalPeriod) - 1)-rateLock-1.5/100)/\
+        marketRet - rateLock))
+    sharpe = ((mvoPerformance  [len(mvoPerformance)-1]** (252 / totalPeriod) - 1)-rateLock-fees/100)/\
              (mvoPerformance.std()*252**0.5)*100
 
     p = np.argmax(np.maximum.accumulate(mvoPerformance) - mvoPerformance)  # end of the period
     q = np.argmax(mvoPerformance[:p])  # start of period
-    ks = int(kstest2.main(mvoPerformance,benchmarkPerformance,critical, 'larger')[1] > critical)
 
     excessRet = mvoPerformance - 1 - mar
 
@@ -443,23 +356,25 @@ def backtest(desiredRet, start, end, trainingPeriod, period, gamma, lam, b, crit
     else:
         sortino = "n/a"
 
-    results ['MVO'] = {'beat': int(alpha > 0), 'alpha': alpha, 'KSbench': ks, 'Sharpe': sharpe,
+    conalphat = stats.ttest_1samp(mvoalpha, 0.0)
+    conalpha = int(conalphat[0] > 0 and conalphat[1] < critical)
+
+    results ['MVO'] = {'beat': int(alpha > 0), 'alpha': alpha, 'Sharpe': sharpe,
                        'Return': (mvoPerformance[len(mvoPerformance)-1])**(252/totalPeriod)-1,
                        'Drawdown': ((mvoPerformance[q] - mvoPerformance[p])
-                                          /mvoPerformance[q])**(252/(p-q)), 'Beta': beta, 'benchExcess': benchExcess,
-                       'ConAlpha': int(stats.ttest_1samp(mvoalpha, 0.0)[0] > 0.05), 'Sortino': sortino}
+                                          /mvoPerformance[q])**(252/(p-q)), 'Beta': beta,
+                       'ConAlpha': conalpha, 'Sortino': sortino}
 
-    benchExcess = rpPerformance[len(rpPerformance) - 1] - benchmarkPerformance[len(benchmarkPerformance) - 1]
+
     cov = np.cov(marketTemp['Market'], returnsMatrix2(rpPerformance))
     beta = cov[1, 0] / cov[0, 0]
     alpha = rpPerformance[len(rpPerformance) - 1] ** (252 / totalPeriod) - 1 - (rateLock + beta * (
         marketRet - rateLock))
-    sharpe = ((rpPerformance[len(rpPerformance) - 1] ** (252 / totalPeriod) - 1) - rateLock-1.5/100) /\
+    sharpe = ((rpPerformance[len(rpPerformance) - 1] ** (252 / totalPeriod) - 1) - rateLock-fees/100) /\
              (rpPerformance.std()*252**0.5)*100
 
     p = np.argmax(np.maximum.accumulate(rpPerformance) - rpPerformance)  # end of the period
     q = np.argmax(rpPerformance[:p])  # start of period
-    ks = int(kstest2.main(rpPerformance, benchmarkPerformance, critical, 'larger')[1] > critical)
 
     excessRet = rpPerformance - 1 - mar
 
@@ -468,24 +383,24 @@ def backtest(desiredRet, start, end, trainingPeriod, period, gamma, lam, b, crit
     else:
         sortino = "n/a"
 
-    results ['Risk Parity'] = {'beat': int(alpha > 0), 'alpha': alpha, 'KS': ks, 'Sharpe': sharpe,
+    conalphat = stats.ttest_1samp(rpalpha, 0.0)
+    conalpha = int(conalphat[0] > 0 and conalphat[1] < critical)
+
+    results ['Risk Parity'] = {'beat': int(alpha > 0), 'alpha': alpha, 'Sharpe': sharpe,
                                'Return': (rpPerformance[len(rpPerformance)-1])**(252/totalPeriod)-1,
                                'Drawdown': ((rpPerformance[q] - rpPerformance[p])
-                                            /rpPerformance[q])**(252/(p-q)), 'Beta': beta, 'benchExcess': benchExcess,
-                               'ConAlpha': int(stats.ttest_1samp(rpalpha, 0.0)[0] > 0.05), 'Sortino': sortino}
-
-    benchExcess = cvarPerformance[len(cvarPerformance) - 1] - benchmarkPerformance[len(benchmarkPerformance) - 1]
+                                            /rpPerformance[q])**(252/(p-q)), 'Beta': beta,
+                               'ConAlpha': conalpha, 'Sortino': sortino}
 
     cov = np.cov(marketTemp['Market'], returnsMatrix2(cvarPerformance))
     beta = cov[1, 0] / cov[0, 0]
     alpha = cvarPerformance[len(cvarPerformance) - 1] ** (252 / totalPeriod) - 1 - (rateLock + beta * (
         marketRet - rateLock))
-    sharpe = ((cvarPerformance[len(cvarPerformance) - 1] ** (252 / totalPeriod) - 1) - rateLock-1.5/100) / \
+    sharpe = ((cvarPerformance[len(cvarPerformance) - 1] ** (252 / totalPeriod) - 1) - rateLock-fees/100) / \
              (cvarPerformance.std()*252**0.5)*100
 
     p = np.argmax(np.maximum.accumulate(cvarPerformance) - cvarPerformance)  # end of the period
     q = np.argmax(cvarPerformance[:p])  # start of period
-    ks = int(kstest2.main(cvarPerformance, benchmarkPerformance, critical, 'larger')[1] > critical)
 
     excessRet = cvarPerformance - 1 - mar
 
@@ -494,24 +409,24 @@ def backtest(desiredRet, start, end, trainingPeriod, period, gamma, lam, b, crit
     else:
         sortino = "n/a"
 
-    results ['CVaR'] = {'beat': int(alpha > 0), 'alpha': alpha, 'KS': ks, 'Sharpe': sharpe,
+    conalphat = stats.ttest_1samp(cvaralpha, 0.0)
+    conalpha = int(conalphat[0] > 0 and conalphat[1] < critical)
+
+    results ['CVaR'] = {'beat': int(alpha > 0), 'alpha': alpha, 'Sharpe': sharpe,
                        'Return': (cvarPerformance[len(cvarPerformance)-1])**(252/totalPeriod)-1,
                        'Drawdown': ((cvarPerformance[q] - cvarPerformance[p])
-                                          /cvarPerformance[q])**(252/(p-q)), 'Beta': beta, 'benchExcess': benchExcess,
-                        'ConAlpha': int(stats.ttest_1samp(cvaralpha, 0.0)[0] > 0.05), 'Sortino': sortino}
-
-    benchExcess = utilPerformance[len(utilPerformance) - 1] - benchmarkPerformance[len(benchmarkPerformance) - 1]
+                                          /cvarPerformance[q])**(252/(p-q)), 'Beta': beta,
+                        'ConAlpha': conalpha, 'Sortino': sortino}
 
     cov = np.cov(marketTemp['Market'], returnsMatrix2(utilPerformance))
     beta = cov[1, 0] / cov[0, 0]
     alpha = utilPerformance[len(utilPerformance) - 1] ** (252 / totalPeriod) - 1 - (rateLock + beta * (
         marketRet - rateLock))
-    sharpe = ((utilPerformance[len(utilPerformance) - 1] ** (252 / totalPeriod) - 1) - rateLock-1.5/100) / \
+    sharpe = ((utilPerformance[len(utilPerformance) - 1] ** (252 / totalPeriod) - 1) - rateLock-fees/100) / \
              (utilPerformance.std()*252**0.5)*100
 
     p = np.argmax(np.maximum.accumulate(utilPerformance) - utilPerformance)  # end of the period
     q = np.argmax(utilPerformance[:p])  # start of period
-    ks = int(kstest2.main(utilPerformance, benchmarkPerformance, critical, 'larger')[1] > critical)
 
     excessRet = utilPerformance - 1 - mar
 
@@ -520,65 +435,14 @@ def backtest(desiredRet, start, end, trainingPeriod, period, gamma, lam, b, crit
     else:
         sortino = "n/a"
 
-    results ['Utility'] = {'beat': int(alpha > 0), 'alpha': alpha, 'KS': ks, 'Sharpe': sharpe,
+    conalphat = stats.ttest_1samp(utilalpha, 0.0)
+    conalpha = int(conalphat[0] > 0 and conalphat[1] < critical)
+
+    results ['Utility'] = {'beat': int(alpha > 0), 'alpha': alpha, 'Sharpe': sharpe,
                            'Return': (utilPerformance[len(utilPerformance)-1])**(252/totalPeriod)-1,
                            'Drawdown': ((utilPerformance[q] - utilPerformance[p])
-                                        /utilPerformance[q])**(252/(p-q)), 'Beta': beta, 'benchExcess': benchExcess,
-                           'ConAlpha': int(stats.ttest_1samp(utilalpha, 0.0)[0] > 0.05), 'Sortino': sortino}
-
-    benchExcess = utilPerformancepow[len(utilPerformancepow) - 1] - benchmarkPerformance[len(benchmarkPerformance) - 1]
-
-    cov = np.cov(marketTemp['Market'], returnsMatrix2(utilPerformancepow))
-    beta = cov[1, 0] / cov[0, 0]
-    alpha = utilPerformancepow[len(utilPerformancepow) - 1] ** (252 / totalPeriod) - 1 - (rateLock + beta * (
-        marketRet - rateLock))
-    sharpe = ((utilPerformancepow[len(utilPerformancepow) - 1] ** (252 / totalPeriod) - 1) - rateLock-1.5/100) / \
-             (utilPerformancepow.std() * 252 ** 0.5) * 100
-
-    excessRet = utilPerformancepow - 1 - mar
-
-    if (np.std(np.minimum(excessRet, 0)) > 0):
-        sortino = np.mean(excessRet) / np.std(np.minimum(excessRet, 0))
-    else:
-        sortino = "n/a"
-
-    p = np.argmax(np.maximum.accumulate(utilPerformancepow) - utilPerformancepow)  # end of the period
-    q = np.argmax(utilPerformancepow[:p])  # start of period
-    ks = int(kstest2.main(utilPerformancepow, benchmarkPerformance, critical, 'larger')[1] > critical)
-    results['Utility Pow'] = {'beat': int(alpha > 0), 'alpha': alpha, 'KS': ks, 'Sharpe': sharpe,
-                          'Return': (utilPerformancepow[len(utilPerformancepow) - 1]) ** (252 / totalPeriod) - 1,
-                          'Drawdown': ((utilPerformancepow[q] - utilPerformancepow[p])
-                                       / utilPerformancepow[q]) ** (252 / (p - q)), 'Beta': beta,
-                          'benchExcess': benchExcess,
-                          'ConAlpha': int(stats.ttest_1samp(utilalphapow, 0.0)[0] > 0.05), 'Sortino': sortino}
-
-    benchExcess = utilPerformancelog[len(utilPerformancelog) - 1] - benchmarkPerformance[len(benchmarkPerformance) - 1]
-
-    cov = np.cov(marketTemp['Market'], returnsMatrix2(utilPerformancelog))
-    beta = cov[1, 0] / cov[0, 0]
-    alpha = utilPerformancelog[len(utilPerformancelog) - 1] ** (252 / totalPeriod) - 1 - (rateLock + beta * (
-        marketRet - rateLock))
-    sharpe = ((utilPerformancelog[len(utilPerformancelog) - 1] ** (252 / totalPeriod) - 1) - rateLock-1.5/100) / \
-             (utilPerformancelog.std() * 252 ** 0.5) * 100
-
-    p = np.argmax(np.maximum.accumulate(utilPerformancelog) - utilPerformancelog)  # end of the period
-    q = np.argmax(utilPerformancelog[:p])  # start of period
-    ks = int(kstest2.main(utilPerformancelog, benchmarkPerformance, critical, 'larger')[1] > critical)
-
-    excessRet = utilPerformancelog - 1 - mar
-
-    if (np.std(np.minimum(excessRet, 0)) > 0):
-        sortino = np.mean(excessRet) / np.std(np.minimum(excessRet, 0))
-    else:
-        sortino = "n/a"
-
-    results['Utility Log'] = {'beat': int(alpha > 0), 'alpha': alpha, 'KS': ks, 'Sharpe': sharpe,
-                              'Return': (utilPerformancelog[len(utilPerformancelog) - 1]) ** (252 / totalPeriod) - 1,
-                              'Drawdown': ((utilPerformancelog[q] - utilPerformancelog[p])
-                                           / utilPerformancelog[q]) ** (252 / (p - q)), 'Beta': beta,
-                              'benchExcess': benchExcess,
-                              'ConAlpha': int(stats.ttest_1samp(utilalphalog, 0.0)[0] > 0.05), 'Sortino': sortino}
-
+                                        /utilPerformance[q])**(252/(p-q)), 'Beta': beta,
+                           'ConAlpha': conalpha, 'Sortino': sortino}
     return results
 ##########################
 
@@ -592,14 +456,17 @@ btestlogCVaR = pd.DataFrame()
 btestlogUtil = pd.DataFrame()
 
 desiredRet = [0.05, 0.25]
-start = [20, 32]
-end = [8, 28]
+start = [28, 36]
+end = [8, 24]
 trainingPeriod = [4, 16]
 period = [63, 252]
 gamma = [1, 5] # lam assumed to be the same
 
 modelData = pd.read_csv('Data/MarketData.csv')
 market = pd.read_csv('Data/Market.csv')
+rate = pd.read_csv('Data/Rate3m.csv')
+
+#backtest(0.05, 1, 65, 1, 63, 5, 5, 0.05, 1, modelData, market, rate)
 
 # Parameters: desiredRet, start, end, trainingPeriod, period, gamma, lam, critical, showPlot, modelData, market, rate
 for p in period:
@@ -615,32 +482,21 @@ for p in period:
             for e in end:
                 for tp in trainingPeriod:
                         for g in gamma:
-                            b = 1
-                            if g == 1:
-                                b = 0.99
-                            else:
-                                b = -20
-
                             config = {'desiredRet': dr, 'start': s, 'end': s + e, 'trainingPeriod': tp, 'period': p,
-                                      'gamma': g, 'lam': g, 'beta': b}
+                                      'gamma': g, 'lam': g}
                             print(config)
                             
-                            bresult = backtest(dr, s, s+e, tp, p, g, g, b, 0.05, 0, modelData, market, rate)
+                            bresult = backtest(dr, s, s+e, tp, p, g, g, 0.05, 0, modelData, market, rate)
                             btestlogBench = btestlogBench.append({**config, **bresult['Benchmark']}, ignore_index=True)
                             btestlogMVO = btestlogMVO.append({**config, **bresult['MVO']}, ignore_index=True)
                             btestlogRP = btestlogRP.append({**config, **bresult['Risk Parity']}, ignore_index=True)
                             btestlogCVaR = btestlogCVaR.append({**config, **bresult['CVaR']}, ignore_index=True)
                             btestlogUtil = btestlogUtil.append({**config, **bresult['Utility']}, ignore_index=True)
-                            btestlogUtilPow = btestlogUtil.append({**config, **bresult['Utility Pow']}, ignore_index=True)
-                            btestlogUtilLog = btestlogUtil.append({**config, **bresult['Utility Log']}, ignore_index=True)
 
 btestlogBench.to_csv('BacktestLogBench.csv', sep=',')
 btestlogMVO.to_csv('BacktestLogMVO.csv', sep=',')
 btestlogRP.to_csv('BacktestLogRP.csv', sep=',')
 btestlogCVaR.to_csv('BacktestLogCVaR.csv', sep=',')
 btestlogUtil.to_csv('BacktestLogUtil.csv', sep=',')
-btestlogUtilPow.to_csv('BacktestLogUtilPow.csv', sep=',')
-btestlogUtilLog.to_csv('BacktestLogUtilLog.csv', sep=',')
-
 ############################
 
